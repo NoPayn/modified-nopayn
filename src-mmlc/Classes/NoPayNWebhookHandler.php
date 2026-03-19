@@ -121,8 +121,15 @@ class NoPayNWebhookHandler
      */
     private function getConfigValue(string $paymentMethod, string $keySuffix): string
     {
-        $prefix = 'MODULE_PAYMENT_PAYMENT_NOPAYN_' . strtoupper(str_replace('-', '', $paymentMethod));
-        $key = $prefix . '_' . $keySuffix;
+        // Map NoPayN API payment method to module config suffix
+        $methodMap = [
+            'credit-card' => 'CREDITCARD',
+            'apple-pay' => 'APPLEPAY',
+            'google-pay' => 'GOOGLEPAY',
+            'vipps-mobilepay' => 'MOBILEPAY',
+        ];
+        $suffix = $methodMap[$paymentMethod] ?? strtoupper(str_replace('-', '', $paymentMethod));
+        $key = 'MODULE_PAYMENT_PAYMENT_NOPAYN_' . $suffix . '_' . $keySuffix;
         return defined($key) ? constant($key) : '';
     }
 

@@ -79,8 +79,15 @@ if ($status === 'completed') {
     ));
 
     if ($transaction) {
-        $methodUpper = strtoupper(str_replace(['-', ' '], '', $transaction['payment_method']));
-        $statusKey = 'MODULE_PAYMENT_PAYMENT_NOPAYN_' . $methodUpper . '_ORDER_STATUS_ID';
+        // Map NoPayN API payment method to module config suffix
+        $methodMap = [
+            'credit-card' => 'CREDITCARD',
+            'apple-pay' => 'APPLEPAY',
+            'google-pay' => 'GOOGLEPAY',
+            'vipps-mobilepay' => 'MOBILEPAY',
+        ];
+        $methodSuffix = $methodMap[$transaction['payment_method']] ?? strtoupper(str_replace(['-', ' '], '', $transaction['payment_method']));
+        $statusKey = 'MODULE_PAYMENT_PAYMENT_NOPAYN_' . $methodSuffix . '_ORDER_STATUS_ID';
         $completedStatusId = defined($statusKey) ? (int) constant($statusKey) : 2;
 
         xtc_db_query(
@@ -101,8 +108,8 @@ if ($status === 'completed') {
     // Redirect to checkout success
     xtc_redirect(xtc_href_link('checkout_success.php', '', 'SSL'));
 } elseif ($status === 'processing') {
-    // Payment still processing (e.g. 3DS challenge) — redirect to success, webhook will confirm
-    xtc_redirect(xtc_href_link('checkout_success.php', '', 'SSL'));
+    // Payment still processing — redirect to checkout_process to finalize order, webhook will confirm final status
+    xtc_redirect(xtc_href_link('checkout_process.php', '', 'SSL'));
 } else {
     // Payment not completed — redirect to checkout with error
     $errorMsg = 'Payment was not completed (status: ' . htmlspecialchars($status) . '). Please try again.';
