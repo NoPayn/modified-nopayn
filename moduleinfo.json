@@ -1,0 +1,24 @@
+{
+    "name": "NoPayN Payment Gateway",
+    "archiveName": "costplus/nopayn",
+    "sourceDir": "src",
+    "version": "1.0.0",
+    "shortDescription": "Accept payments via NoPayN/Cost+ (Credit Card, Apple Pay, Google Pay, Vipps/MobilePay)",
+    "description": "<p>NoPayN/Cost+ payment gateway integration for modified eCommerce. Supports Credit Card (Visa, Mastercard, Amex, Maestro, V Pay, Bancontact, Diners, Discover), Apple Pay, Google Pay, and Vipps/MobilePay via the Hosted Payment Page (HPP).</p><p>Features: PCI DSS compliant hosted payment page, webhook-based order status updates, partial and full refunds from admin.</p>",
+    "developer": "Cost+",
+    "website": "https://costplus.io",
+    "category": "payment",
+    "price": "free",
+    "modifiedCompatibility": {
+        "from": "2.0.7.0",
+        "to": "3.3.0"
+    },
+    "php": {
+        "version": ">=8.0.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "CostPlus\\NoPayN\\": "src-mmlc/Classes/"
+        }
+    }
+}
