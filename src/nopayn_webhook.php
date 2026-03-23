@@ -28,6 +28,7 @@ if (file_exists(DIR_FS_DOCUMENT_ROOT . 'vendor-mmlc/autoload.php')) {
 }
 
 use CostPlus\NoPayN\NoPayNApi;
+use CostPlus\NoPayN\NoPayNLogger;
 use CostPlus\NoPayN\NoPayNWebhookHandler;
 
 // Read and decode JSON payload
@@ -60,14 +61,18 @@ if ($apiKey === '') {
 }
 
 try {
-    $api = new NoPayNApi($apiKey);
-    $handler = new NoPayNWebhookHandler($api);
+    $logger = new NoPayNLogger();
+    $api = new NoPayNApi($apiKey, 'https://api.nopayn.co.uk', $logger);
+    $handler = new NoPayNWebhookHandler($api, $logger);
     $updated = $handler->handle($payload);
 
     http_response_code(200);
     echo json_encode(['status' => 'ok', 'updated' => $updated]);
 } catch (\Exception $e) {
     error_log('NoPayN webhook error: ' . $e->getMessage());
+    if (isset($logger)) {
+        $logger->error('Webhook processing error: ' . $e->getMessage());
+    }
     // Return 200 even on error to prevent unnecessary retries for permanent failures
     http_response_code(200);
     echo json_encode(['status' => 'error', 'message' => 'Processing error']);

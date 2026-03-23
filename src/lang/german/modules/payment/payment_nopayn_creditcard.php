@@ -24,3 +24,9 @@ define('MODULE_PAYMENT_PAYMENT_NOPAYN_CREDITCARD_ZONE_DESC', 'Wenn eine Zone aus
 
 define('MODULE_PAYMENT_PAYMENT_NOPAYN_CREDITCARD_ALLOWED_TITLE', 'Erlaubte Zonen');
 define('MODULE_PAYMENT_PAYMENT_NOPAYN_CREDITCARD_ALLOWED_DESC', 'Kommagetrennte Liste erlaubter Zonen-IDs (leer lassen f&uuml;r alle).');
+
+define('MODULE_PAYMENT_PAYMENT_NOPAYN_CREDITCARD_MANUAL_CAPTURE_TITLE', 'Manuelle Erfassung');
+define('MODULE_PAYMENT_PAYMENT_NOPAYN_CREDITCARD_MANUAL_CAPTURE_DESC', 'Manuelle Erfassung f&uuml;r Kreditkartenzahlungen aktivieren. Wenn aktiviert, werden Zahlungen nur autorisiert und m&uuml;ssen manuell erfasst werden (z.B. bei Status&auml;nderung auf abgeschlossen).');
+
+define('MODULE_PAYMENT_NOPAYN_DEBUG_LOGGING_TITLE', 'Debug-Protokollierung');
+define('MODULE_PAYMENT_NOPAYN_DEBUG_LOGGING_DESC', 'Detaillierte Debug-Protokollierung f&uuml;r alle NoPayn-Zahlungsmethoden aktivieren. Protokolliert API-Anfragen, -Antworten und Webhook-Ereignisse im Shop-Log-Verzeichnis.');

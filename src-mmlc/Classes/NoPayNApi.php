@@ -12,11 +12,13 @@ class NoPayNApi
 {
     private string $apiKey;
     private string $baseUrl;
+    private ?NoPayNLogger $logger;
 
-    public function __construct(string $apiKey, string $baseUrl = 'https://api.nopayn.co.uk')
+    public function __construct(string $apiKey, string $baseUrl = 'https://api.nopayn.co.uk', ?NoPayNLogger $logger = null)
     {
         $this->apiKey = $apiKey;
         $this->baseUrl = rtrim($baseUrl, '/');
+        $this->logger = $logger;
     }
 
     /**
@@ -62,6 +64,46 @@ class NoPayNApi
     }
 
     /**
+     * Capture an authorized transaction.
+     * POST /v1/orders/{orderId}/transactions/{transactionId}/captures/
+     *
+     * @param string $orderId NoPayN order UUID
+     * @param string $transactionId NoPayN transaction UUID
+     * @return array API response with capture details
+     */
+    public function captureTransaction(string $orderId, string $transactionId): array
+    {
+        return $this->request(
+            'POST',
+            '/v1/orders/' . urlencode($orderId) . '/transactions/' . urlencode($transactionId) . '/captures/',
+            []
+        );
+    }
+
+    /**
+     * Void an authorized transaction (full or partial).
+     * POST /v1/orders/{orderId}/transactions/{transactionId}/voids/amount/
+     *
+     * @param string $orderId NoPayN order UUID
+     * @param string $transactionId NoPayN transaction UUID
+     * @param int $amountInCents Void amount in smallest currency unit (cents)
+     * @param string $description Reason for void
+     * @return array API response with void details
+     */
+    public function voidTransaction(string $orderId, string $transactionId, int $amountInCents, string $description = ''): array
+    {
+        $body = ['amount' => $amountInCents];
+        if ($description !== '') {
+            $body['description'] = $description;
+        }
+        return $this->request(
+            'POST',
+            '/v1/orders/' . urlencode($orderId) . '/transactions/' . urlencode($transactionId) . '/voids/amount/',
+            $body
+        );
+    }
+
+    /**
      * Perform an HTTP request to the NoPayN API.
      *
      * @param string $method HTTP method (GET, POST)
@@ -73,6 +115,10 @@ class NoPayNApi
     private function request(string $method, string $endpoint, ?array $body = null): array
     {
         $url = $this->baseUrl . $endpoint;
+
+        if ($this->logger) {
+            $this->logger->logApiRequest($method, $endpoint, $body);
+        }
 
         $ch = curl_init();
         curl_setopt_array($ch, [
@@ -102,17 +148,30 @@ class NoPayNApi
         curl_close($ch);
 
         if ($response === false) {
+            if ($this->logger) {
+                $this->logger->logApiError($method, $endpoint, $curlError);
+            }
             throw new \RuntimeException('NoPayN API request failed: ' . $curlError);
         }
 
         $decoded = json_decode($response, true);
         if ($decoded === null && $response !== '') {
+            if ($this->logger) {
+                $this->logger->logApiError($method, $endpoint, 'Invalid JSON: ' . substr($response, 0, 500));
+            }
             throw new \RuntimeException('NoPayN API returned invalid JSON: ' . substr($response, 0, 500));
         }
 
         if ($httpCode >= 400) {
             $errorMsg = $decoded['error']['value'] ?? $decoded['error']['message'] ?? 'Unknown error';
+            if ($this->logger) {
+                $this->logger->logApiError($method, $endpoint, 'HTTP ' . $httpCode . ': ' . $errorMsg);
+            }
             throw new \RuntimeException('NoPayN API error (HTTP ' . $httpCode . '): ' . $errorMsg);
+        }
+
+        if ($this->logger) {
+            $this->logger->logApiResponse($method, $endpoint, $httpCode, $decoded ?? []);
         }
 
         return $decoded ?? [];

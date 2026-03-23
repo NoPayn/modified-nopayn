@@ -46,6 +46,9 @@ class NoPayNBase
     /** @var string API base URL */
     protected $api_base_url = 'https://api.nopayn.co.uk';
 
+    /** @var NoPayNLogger|null Logger instance */
+    protected $logger = null;
+
     public function __construct()
     {
         // Config prefix must match what modified-shop framework expects:
@@ -75,6 +78,9 @@ class NoPayNBase
         if (defined($this->config_prefix . '_PENDING_STATUS_ID')) {
             $this->tmpStatus = (int) constant($this->config_prefix . '_PENDING_STATUS_ID');
         }
+
+        // Initialize logger
+        $this->logger = $this->getLogger();
     }
 
     /**
@@ -164,7 +170,7 @@ class NoPayNBase
                 $orderData = $api->getOrder($nopaynOrderId);
                 $status = $orderData['status'] ?? '';
             } catch (\Exception $e) {
-                error_log('NoPayN before_process: API error - ' . $e->getMessage());
+                $this->logError('before_process: API error - ' . $e->getMessage());
                 $status = '';
             }
 
@@ -204,6 +210,16 @@ class NoPayNBase
         // Determine shop base URL
         $shopUrl = $this->getShopUrl();
 
+        // Build transaction data
+        $transactionData = ['payment_method' => $this->nopayn_payment_method];
+
+        // Check if manual capture is enabled (credit card only)
+        $captureMode = '';
+        if ($this->isManualCaptureEnabled()) {
+            $transactionData['capture_mode'] = 'manual';
+            $captureMode = 'manual';
+        }
+
         // Build order params
         $params = [
             'merchant_order_id' => (string) $orderId,
@@ -213,9 +229,7 @@ class NoPayNBase
             'return_url' => $shopUrl . 'nopayn_return.php?action=success',
             'failure_url' => $shopUrl . 'nopayn_return.php?action=failure',
             'webhook_url' => $shopUrl . 'nopayn_webhook.php',
-            'transactions' => [
-                ['payment_method' => $this->nopayn_payment_method],
-            ],
+            'transactions' => [$transactionData],
         ];
 
         // Add locale if available
@@ -224,16 +238,24 @@ class NoPayNBase
             $params['locale'] = $locale;
         }
 
+        // Add itemized order lines
+        $orderLines = $this->buildOrderLines($order, $currency);
+        if (!empty($orderLines)) {
+            $params['order_lines'] = $orderLines;
+        }
+
+        $this->logDebug('Creating order #' . $orderId, ['params' => $params]);
+
         try {
             $response = $api->createOrder($params);
         } catch (\RuntimeException $e) {
-            error_log('NoPayN create order error: ' . $e->getMessage());
+            $this->logError('Create order error: ' . $e->getMessage());
             $this->redirectWithError('Payment gateway error. Please try again.');
             return;
         }
 
         if (empty($response['id']) || empty($response['transactions'][0]['payment_url'])) {
-            error_log('NoPayN: invalid response - missing id or payment_url');
+            $this->logError('Invalid response - missing id or payment_url');
             $this->redirectWithError('Payment gateway error. Please try again.');
             return;
         }
@@ -242,11 +264,13 @@ class NoPayNBase
         $paymentUrl = $response['transactions'][0]['payment_url'];
 
         // Store transaction in our tracking table
-        $this->saveTransaction($orderId, $nopaynOrderId, $amountCents, $currency);
+        $this->saveTransaction($orderId, $nopaynOrderId, $amountCents, $currency, $captureMode);
 
         // Save NoPayN order ID in session for return handler
         $_SESSION['nopayn_order_id'] = $nopaynOrderId;
         $_SESSION['nopayn_shop_order_id'] = $orderId;
+
+        $this->logDebug('Redirecting to payment page', ['nopayn_order_id' => $nopaynOrderId, 'payment_url' => $paymentUrl]);
 
         // Redirect customer to NoPayN hosted payment page
         xtc_redirect($paymentUrl);
@@ -378,7 +402,7 @@ class NoPayNBase
             ? constant($this->config_prefix . '_API_KEY')
             : '';
 
-        return new NoPayNApi($apiKey, $this->api_base_url);
+        return new NoPayNApi($apiKey, $this->api_base_url, $this->logger);
     }
 
     /**
@@ -413,9 +437,82 @@ class NoPayNBase
     }
 
     /**
+     * Check if manual capture mode is enabled for this payment method.
+     */
+    protected function isManualCaptureEnabled(): bool
+    {
+        return defined($this->config_prefix . '_MANUAL_CAPTURE')
+            && constant($this->config_prefix . '_MANUAL_CAPTURE') === 'True';
+    }
+
+    /**
+     * Build itemized order lines from the cart/order for the API payload.
+     *
+     * @param object $order The modified eCommerce order object
+     * @param string $currency ISO 4217 currency code
+     * @return array Order lines array for the API
+     */
+    protected function buildOrderLines($order, string $currency): array
+    {
+        $orderLines = [];
+        $lineId = 1;
+
+        // Add product lines
+        if (isset($order->products) && is_array($order->products)) {
+            foreach ($order->products as $product) {
+                $unitPrice = isset($product['final_price']) ? (float) $product['final_price'] : (float) ($product['price'] ?? 0);
+                $unitPriceCents = (int) round($unitPrice * 100);
+                $quantity = isset($product['qty']) ? (int) $product['qty'] : 1;
+                $taxRate = isset($product['tax']) ? (int) round((float) $product['tax'] * 100) : 0;
+                $name = $product['name'] ?? 'Product';
+
+                $orderLines[] = [
+                    'type' => 'physical',
+                    'name' => $name,
+                    'quantity' => $quantity,
+                    'amount' => $unitPriceCents,
+                    'currency' => $currency,
+                    'vat_percentage' => $taxRate,
+                    'merchant_order_line_id' => (string) $lineId,
+                ];
+
+                $lineId++;
+            }
+        }
+
+        // Add shipping fee line if applicable
+        $shippingCost = 0;
+        if (isset($order->info['shipping_cost'])) {
+            $shippingCost = (float) $order->info['shipping_cost'];
+        }
+        if ($shippingCost > 0) {
+            $shippingCents = (int) round($shippingCost * 100);
+            $shippingTitle = isset($order->info['shipping_method']) ? $order->info['shipping_method'] : 'Shipping';
+
+            // Determine shipping tax rate
+            $shippingTaxRate = 0;
+            if (isset($order->info['shipping_tax']) && $shippingCost > 0) {
+                $shippingTaxRate = (int) round(((float) $order->info['shipping_tax'] / $shippingCost) * 10000);
+            }
+
+            $orderLines[] = [
+                'type' => 'shipping_fee',
+                'name' => $shippingTitle,
+                'quantity' => 1,
+                'amount' => $shippingCents,
+                'currency' => $currency,
+                'vat_percentage' => $shippingTaxRate,
+                'merchant_order_line_id' => (string) $lineId,
+            ];
+        }
+
+        return $orderLines;
+    }
+
+    /**
      * Save a transaction record.
      */
-    protected function saveTransaction(int $ordersId, string $nopaynOrderId, int $amount, string $currency): void
+    protected function saveTransaction(int $ordersId, string $nopaynOrderId, int $amount, string $currency, string $captureMode = ''): void
     {
         xtc_db_query(
             "INSERT INTO nopayn_transactions SET "
@@ -424,6 +521,7 @@ class NoPayNBase
             . "payment_method = '" . xtc_db_input($this->nopayn_payment_method) . "', "
             . "amount = " . $amount . ", "
             . "currency = '" . xtc_db_input($currency) . "', "
+            . "capture_mode = '" . xtc_db_input($captureMode) . "', "
             . "status = 'new', "
             . "created_at = NOW(), "
             . "updated_at = NOW()"
@@ -442,6 +540,7 @@ class NoPayNBase
             payment_method VARCHAR(64) NOT NULL,
             amount INT NOT NULL,
             currency VARCHAR(3) NOT NULL,
+            capture_mode VARCHAR(32) NOT NULL DEFAULT '',
             status VARCHAR(32) NOT NULL DEFAULT 'new',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -485,5 +584,34 @@ class NoPayNBase
         xtc_redirect(
             xtc_href_link('checkout_payment.php', 'payment_error=' . $this->code . '&nopayn_error=' . urlencode($message), 'SSL')
         );
+    }
+
+    /**
+     * Get a logger instance.
+     */
+    protected function getLogger(): NoPayNLogger
+    {
+        return new NoPayNLogger();
+    }
+
+    /**
+     * Log an error message (always logged).
+     */
+    protected function logError(string $message): void
+    {
+        if ($this->logger) {
+            $this->logger->error($message);
+        }
+        error_log('NoPayN ' . $message);
+    }
+
+    /**
+     * Log a debug message (only when debug logging is enabled).
+     */
+    protected function logDebug(string $message, array $context = []): void
+    {
+        if ($this->logger) {
+            $this->logger->debug($message, $context);
+        }
     }
 }
