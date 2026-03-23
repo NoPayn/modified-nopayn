@@ -254,6 +254,138 @@ Content-Type: application/json
 
 ---
 
+### Capture Transaction
+
+```
+POST /v1/orders/{order_id}/transactions/{transaction_id}/captures/
+```
+
+Captures a previously authorized transaction. Used when credit card manual capture is enabled — the payment is authorized at checkout but funds are only captured when the merchant ships or completes the order.
+
+> **Note**: Only applicable when the transaction was created with `"capture_mode": "manual"` in the transactions array.
+
+#### Request Body
+
+Empty body or `{}`.
+
+#### Example Request
+
+```json
+POST /v1/orders/4c6afd74-a840-4aab-b411-1e6e0636d341/transactions/058cf70d-7a84-4957-941c-532c065cef72/captures/
+Authorization: Basic <key>
+Content-Type: application/json
+```
+
+#### Example Response
+
+Returns the updated transaction object.
+
+---
+
+### Void Transaction
+
+```
+POST /v1/orders/{order_id}/transactions/{transaction_id}/voids/amount/
+```
+
+Voids a previously authorized (uncaptured) transaction. Used when the merchant cancels an order that was authorized but not yet captured.
+
+> **Note**: Only applicable to authorized transactions that have not been captured or previously voided.
+
+#### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `amount` | integer | Yes | Amount to void in cents |
+| `description` | string | No | Reason for the void |
+
+#### Example Request
+
+```json
+POST /v1/orders/4c6afd74-a840-4aab-b411-1e6e0636d341/transactions/058cf70d-7a84-4957-941c-532c065cef72/voids/amount/
+Authorization: Basic <key>
+Content-Type: application/json
+
+{
+  "amount": 995,
+  "description": "Order cancelled by merchant"
+}
+```
+
+#### Example Response
+
+Returns the updated transaction object.
+
+---
+
+## Order Lines
+
+When creating an order, you can include itemized `order_lines` for detailed transaction records and improved reconciliation.
+
+#### Order Line Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | Yes | `physical`, `shipping_fee`, or `discount` |
+| `name` | string | Yes | Product/item name |
+| `quantity` | integer | Yes | Number of units |
+| `amount` | integer | Yes | Price per unit in cents |
+| `currency` | string | Yes | ISO 4217 code |
+| `vat_percentage` | integer | No | VAT in basis points (19% = `1900`) |
+| `merchant_order_line_id` | string | No | Your internal line item ID |
+
+#### Example (in create order request)
+
+```json
+{
+  "currency": "EUR",
+  "amount": 1200,
+  "order_lines": [
+    {
+      "type": "physical",
+      "name": "Widget",
+      "quantity": 2,
+      "amount": 500,
+      "currency": "EUR",
+      "vat_percentage": 1900,
+      "merchant_order_line_id": "WIDGET-001"
+    },
+    {
+      "type": "shipping_fee",
+      "name": "Standard Shipping",
+      "quantity": 1,
+      "amount": 200,
+      "currency": "EUR",
+      "vat_percentage": 1900,
+      "merchant_order_line_id": "SHIPPING"
+    }
+  ]
+}
+```
+
+---
+
+## Manual Capture Flow
+
+For credit card payments, you can use authorization + manual capture instead of immediate capture.
+
+### Flow
+
+1. Create order with `"capture_mode": "manual"` in the transactions array:
+   ```json
+   {
+     "transactions": [{
+       "payment_method": "credit-card",
+       "capture_mode": "manual"
+     }]
+   }
+   ```
+2. Customer completes payment — funds are **authorized** but not captured
+3. Merchant ships/completes order → call `POST /v1/orders/{id}/transactions/{txn}/captures/`
+4. If merchant cancels → call `POST /v1/orders/{id}/transactions/{txn}/voids/amount/`
+
+---
+
 ## Webhooks
 
 NoPayn sends an HTTP POST to the `webhook_url` when an order status changes.
@@ -311,10 +443,12 @@ webhooks are missed due to network issues.
 
 | Module Action | API Call | Notes |
 |---------------|----------|-------|
-| `NoPayNBase::payment_action()` | `POST /v1/orders/` | Creates order, redirects to `transactions[0].payment_url` |
+| `NoPayNBase::payment_action()` | `POST /v1/orders/` | Creates order with order lines, redirects to `transactions[0].payment_url` |
 | `NoPayNBase::before_process()` | `GET /v1/orders/{id}/` | Verifies status on customer return |
 | `nopayn_return.php` | `GET /v1/orders/{id}/` | Return URL handler, verifies before redirect |
 | `nopayn_webhook.php` → `NoPayNWebhookHandler` | `GET /v1/orders/{id}/` | Webhook verifies via API, updates shop order |
+| `NoPayNWebhookHandler` (manual capture) | `POST /v1/orders/{id}/transactions/{txn}/captures/` | Auto-captures on order completion |
+| `NoPayNWebhookHandler` (void on cancel) | `POST /v1/orders/{id}/transactions/{txn}/voids/amount/` | Auto-voids on order cancellation |
 | `admin/nopayn_refund.php` | `POST /v1/orders/{id}/refunds/` | Admin refund page |
 
 ### Module vs API Field Mapping
